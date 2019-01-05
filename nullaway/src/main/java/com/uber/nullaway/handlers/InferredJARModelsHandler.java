@@ -110,10 +110,8 @@ public class InferredJARModelsHandler extends BaseNoOpHandler {
    * Scan Java Classpath for JarInfer model jars and map their names to locations
    */
   private void processClassPath() {
-    URL[] classLoaderUrls =
-        ((URLClassLoader) Thread.currentThread().getContextClassLoader()).getURLs();
-    for (URL url : classLoaderUrls) {
-      String path = url.getFile();
+    String[] classPathEntries = System.getProperty("java.class.path").split(System.getProperty("path.separator"));
+    for (String path : classPathEntries) {
       if (path.matches(config.getJarInferRegexStripModelJarName())) {
         String name = path.replaceAll(config.getJarInferRegexStripModelJarName(), "$1");
         LOG(DEBUG, "DEBUG", "model jar name: " + name + "\tjar path: " + path);
