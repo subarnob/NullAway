@@ -5,6 +5,7 @@ import com.uber.nullaway.NullAway;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 
 /** harness for benchmarking NullAway for some javac task */
@@ -15,14 +16,49 @@ public class NullAwayBenchmarkHarness {
    * unmodified (see {@link #justRun(String[])}). If false, we use the logic of {@link
    * #addNullAwayArgsAndRun(String[])}
    */
-  private static final boolean JUST_RUN = true;
+  private static boolean JUST_RUN = true;
+
+  private static boolean DEBUG = false;
+  private static int warmupRuns = 0;
+  private static int realRuns = 10;
+
+  private static void processBenchmarkingArgs(List<String> args) {
+    boolean check = true;
+    while (check) {
+      check = true;
+      switch (args.get(0)) {
+        case "-w":
+        case "-warmupRuns":
+          warmupRuns = Integer.parseInt(args.remove(1));
+          break;
+        case "-r":
+        case "-realRuns":
+          realRuns = Integer.parseInt(args.remove(1));
+          break;
+        case "-na":
+        case "-enableNullAway":
+          JUST_RUN = false;
+          break;
+        case "-debug":
+          DEBUG = true;
+          break;
+        default:
+          check = false;
+      }
+      if (check) args.remove(0);
+    }
+  }
 
   public static void main(String[] args) {
+    List<String> javacArgs = new ArrayList<String>(Arrays.asList(args));
+    processBenchmarkingArgs(javacArgs);
+    boolean result;
     if (JUST_RUN) {
-      justRun(args);
+      result = justRun(javacArgs);
     } else {
-      addNullAwayArgsAndRun(args);
+      result = addNullAwayArgsAndRun(javacArgs);
     }
+    if (!result) System.exit(1);
   }
 
   /**
@@ -35,27 +71,9 @@ public class NullAwayBenchmarkHarness {
    *       -XepDisableAllChecks} (you'll have to do this in a different run)
    * </ul>
    */
-  private static void justRun(String[] args) {
-    List<String> javacArgs = new ArrayList<>(Arrays.asList(args));
-    String nullawayJar = getJarFileForClass(NullAway.class).getFile();
-
-    // add NullAway jar to existing processor path if found
-    boolean foundProcessorPath = false;
-    for (int i = 0; i < javacArgs.size(); i++) {
-      if (javacArgs.get(i).equals("-processorpath")) {
-        foundProcessorPath = true;
-        String procPath = javacArgs.get(i + 1);
-        procPath = procPath + System.getProperties().getProperty("path.separator") + nullawayJar;
-        javacArgs.set(i + 1, procPath);
-        break;
-      }
-    }
-    if (!foundProcessorPath) {
-      javacArgs.add("-processorpath");
-      javacArgs.add(nullawayJar);
-    }
-    System.out.println("Running");
-    runCompile(javacArgs, 3, 8);
+  private static boolean justRun(List<String> args) {
+    System.out.println("Running...");
+    return runCompile(args);
   }
 
   /**
@@ -66,55 +84,56 @@ public class NullAwayBenchmarkHarness {
    *
    * @param args
    */
-  private static void addNullAwayArgsAndRun(String[] args) {
+  private static boolean addNullAwayArgsAndRun(List<String> args) {
     String nullawayJar = getJarFileForClass(NullAway.class).getFile();
-    String annotPackages = args[0];
-    String[] javacArgs = Arrays.copyOfRange(args, 1, args.length);
-    // run NullAway first
+    String annotPackages = "-XepOpt:NullAway:AnnotatedPackages=com.uber";
+    Iterator<String> argi = args.iterator();
+    while (argi.hasNext()) {
+      String arg = argi.next();
+      if (arg.startsWith("-XepOpt:NullAway:AnnotatedPackages=")) {
+        argi.remove();
+        annotPackages = arg;
+        break;
+      }
+    }
+    args.remove("-XepDisableAllChecks");
     List<String> nullawayArgs =
-        Arrays.asList(
-            "-Xmaxwarns",
-            "1",
-            "-XepDisableAllChecks",
-            "-Xep:NullAway:WARN",
-            "-XepOpt:NullAway:AnnotatedPackages=" + annotPackages,
-            "-processorpath",
-            nullawayJar);
-    List<String> fixedArgs = new ArrayList<>();
-    fixedArgs.addAll(nullawayArgs);
-    fixedArgs.addAll(Arrays.asList(javacArgs));
-    System.out.println("With NullAway");
-    runCompile(fixedArgs, 7, 10);
-    // run without NullAway
-    fixedArgs = new ArrayList<>();
-    fixedArgs.add("-XepDisableAllChecks");
-    fixedArgs.addAll(Arrays.asList(javacArgs));
-    System.out.println("No NullAway");
-    runCompile(fixedArgs, 7, 10);
+        new ArrayList<String>(
+            Arrays.asList("-XepDisableAllChecks", "-Xep:NullAway:WARN", annotPackages));
+    int index = args.lastIndexOf("-processorpath");
+    if (index != -1) args.set(index + 1, nullawayJar + ":" + args.get(index + 1));
+    else nullawayArgs.addAll(Arrays.asList("-processorpath", nullawayJar));
+    nullawayArgs.addAll(args);
+    System.out.println("Running with NullAway...");
+    return runCompile(nullawayArgs);
   }
 
-  private static void runCompile(List<String> fixedArgs, int warmupRuns, int realRuns) {
+  private static boolean runCompile(List<String> fixedArgs) {
     String[] finalArgs = fixedArgs.toArray(new String[fixedArgs.size()]);
+    if (DEBUG) System.out.println("[DEBUG] compile args: " + String.join(" ", finalArgs));
     for (int i = 0; i < warmupRuns; i++) {
       System.out.println("Warmup Run " + (i + 1));
-      long startTime = System.nanoTime();
+      double startTime = System.nanoTime();
       ErrorProneCompiler.compile(finalArgs);
-      long endTime = System.nanoTime();
+      double endTime = System.nanoTime();
       System.out.println("Running time " + (((double) endTime - startTime) / 1000000000.0));
     }
-    long totalRunningTime = 0;
+    double totalRunningTime = 0;
+    boolean allOK = true;
     for (int i = 0; i < realRuns; i++) {
       System.out.println("Real Run " + (i + 1));
-      long startTime = System.nanoTime();
-      ErrorProneCompiler.compile(finalArgs);
-      long endTime = System.nanoTime();
-      long runTime = endTime - startTime;
+      double startTime = System.nanoTime();
+      boolean compileStatus = ErrorProneCompiler.compile(finalArgs).isOK();
+      allOK &= compileStatus;
+      double endTime = System.nanoTime();
+      double runTime = endTime - startTime;
       System.out.println("Running time " + (((double) runTime) / 1000000000.0));
       totalRunningTime += runTime;
     }
     System.out.println(
         "Average running time "
             + String.format("%.2f", ((double) totalRunningTime / 1000000000.0) / realRuns));
+    return allOK;
   }
 
   private static URL getJarFileForClass(Class<?> klass) {
