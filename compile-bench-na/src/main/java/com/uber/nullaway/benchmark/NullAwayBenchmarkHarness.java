@@ -23,9 +23,8 @@ public class NullAwayBenchmarkHarness {
   private static int realRuns = 10;
 
   private static void processBenchmarkingArgs(List<String> args) {
-    boolean check = true;
-    while (check) {
-      check = true;
+    boolean foundArg = true;
+    while (foundArg) {
       switch (args.get(0)) {
         case "-w":
         case "-warmupRuns":
@@ -43,22 +42,17 @@ public class NullAwayBenchmarkHarness {
           DEBUG = true;
           break;
         default:
-          check = false;
+          foundArg = false;
       }
-      if (check) args.remove(0);
+      if (foundArg) args.remove(0);
     }
   }
 
   public static void main(String[] args) {
     List<String> javacArgs = new ArrayList<String>(Arrays.asList(args));
     processBenchmarkingArgs(javacArgs);
-    boolean result;
-    if (JUST_RUN) {
-      result = justRun(javacArgs);
-    } else {
-      result = addNullAwayArgsAndRun(javacArgs);
-    }
-    if (!result) System.exit(1);
+    boolean buildOK = JUST_RUN ? justRun(javacArgs) : addNullAwayArgsAndRun(javacArgs);
+    if (!buildOK) System.exit(1);
   }
 
   /**
@@ -112,27 +106,27 @@ public class NullAwayBenchmarkHarness {
     String[] finalArgs = fixedArgs.toArray(new String[fixedArgs.size()]);
     if (DEBUG) System.out.println("[DEBUG] compile args: " + String.join(" ", finalArgs));
     for (int i = 0; i < warmupRuns; i++) {
-      System.out.println("Warmup Run " + (i + 1));
+      if (DEBUG) System.out.println("Warmup Run " + (i + 1));
       double startTime = System.nanoTime();
       ErrorProneCompiler.compile(finalArgs);
       double endTime = System.nanoTime();
-      System.out.println("Running time " + (((double) endTime - startTime) / 1000000000.0));
+      if (DEBUG)
+        System.out.println("Running time " + (((double) endTime - startTime) / 1000000000.0));
     }
     double totalRunningTime = 0;
     boolean allOK = true;
     for (int i = 0; i < realRuns; i++) {
-      System.out.println("Real Run " + (i + 1));
+      if (DEBUG) System.out.println("Real Run " + (i + 1));
       double startTime = System.nanoTime();
-      boolean compileStatus = ErrorProneCompiler.compile(finalArgs).isOK();
-      allOK &= compileStatus;
+      allOK &= ErrorProneCompiler.compile(finalArgs).isOK();
       double endTime = System.nanoTime();
       double runTime = endTime - startTime;
-      System.out.println("Running time " + (((double) runTime) / 1000000000.0));
+      if (DEBUG) System.out.println("Running time " + (((double) runTime) / 1000000000.0));
       totalRunningTime += runTime;
     }
     System.out.println(
         "Average running time "
-            + String.format("%.2f", ((double) totalRunningTime / 1000000000.0) / realRuns));
+            + String.format("%.2f%n", ((double) totalRunningTime / 1000000000.0) / realRuns));
     return allOK;
   }
 
